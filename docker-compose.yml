@@ -1,0 +1,8 @@
+# 僅 Redis（本機開發用）：docker compose up -d
+# 完整生產部署請使用 docker-compose.prod.yml（見 DEPLOYMENT.md）
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    command: redis-server --appendonly yes

@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@300..700&family=Pacifico&family=Berkshire+Swash&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-grass-light: #B7E4C7;
+  --color-grass-dark: #95D5B2;
+  --color-leaf: #A8D08D;
+  --color-lake: #A9DEF9;
+  --color-sky-light: #EAF4FF;
+  --color-sky-grad: #CFE2FF;
+  
+  --color-text-main: #2B2D42;
+  --color-text-sub: rgba(43, 45, 66, 0.6);
+  --color-text-hint: rgba(43, 45, 66, 0.4);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply text-text-main bg-sky-light overflow-hidden font-sans;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.glass-opaque {
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+
+/* Custom scrollbar to keep it minimalistic */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(43, 45, 66, 0.15);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(43, 45, 66, 0.25);
+}

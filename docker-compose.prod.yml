@@ -1,0 +1,53 @@
+# 生產環境：Redis + Nest API + Nginx（靜態前端 + /api 反向代理）
+# 使用方式見 DEPLOYMENT.md。環境變數：複製 deploy.env.example 為專案根目錄 .env 後再啟動。
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      JWT_ACCESS_EXPIRES: ${JWT_ACCESS_EXPIRES:-15m}
+      JWT_REFRESH_EXPIRES: ${JWT_REFRESH_EXPIRES:-7d}
+      WEATHER_API_KEY: ${WEATHER_API_KEY:-}
+      WEATHER_API_HOST: ${WEATHER_API_HOST:-}
+      WEATHER_CREDENTIAL_ID: ${WEATHER_CREDENTIAL_ID:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "4000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  redis_data:
