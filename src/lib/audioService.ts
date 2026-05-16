@@ -7,6 +7,32 @@ let lfoGain: GainNode | null = null;
 let lfo: OscillatorNode | null = null;
 let isPlaying = false;
 let currentWeather: WeatherType = 'cloudy';
+/** 用户环境音量 0–1，与天气基底相乘 */
+let ambientVolume = 0.35;
+
+const weatherBaseGain: Record<WeatherType, number> = {
+  rain: 0.4,
+  snow: 0.2,
+  sunny: 0.3,
+  cloudy: 0.1,
+};
+
+export const getAmbientVolume = () => ambientVolume;
+
+export const setAmbientVolume = (volume: number) => {
+  ambientVolume = Math.max(0, Math.min(1, volume));
+  if (!audioCtx || !gainNode) return;
+  if (ambientVolume <= 0) {
+    gainNode.gain.setTargetAtTime(0, audioCtx.currentTime, 0.15);
+    isPlaying = false;
+    return;
+  }
+  if (!isPlaying) {
+    isPlaying = true;
+    if (audioCtx.state === 'suspended') void audioCtx.resume();
+  }
+  applyWeatherToAudio(currentWeather);
+};
 
 export const initAudio = () => {
   if (audioCtx) return;
@@ -77,24 +103,24 @@ const applyWeatherToAudio = (weather: WeatherType) => {
         case 'rain':
             filter.frequency.setTargetAtTime(1000, now, 2);
             lfoGain.gain.setTargetAtTime(100, now, 2);
-            if (gainNode && isPlaying) gainNode.gain.setTargetAtTime(0.4, now, 2);
             break;
         case 'snow':
             filter.frequency.setTargetAtTime(300, now, 2);
             lfoGain.gain.setTargetAtTime(50, now, 2);
-            if (gainNode && isPlaying) gainNode.gain.setTargetAtTime(0.2, now, 2);
             break;
         case 'sunny':
             filter.frequency.setTargetAtTime(600, now, 2);
             lfoGain.gain.setTargetAtTime(300, now, 2);
-            if (gainNode && isPlaying) gainNode.gain.setTargetAtTime(0.3, now, 2);
             break;
         case 'cloudy':
         default:
             filter.frequency.setTargetAtTime(400, now, 2);
             lfoGain.gain.setTargetAtTime(200, now, 2);
-            if (gainNode && isPlaying) gainNode.gain.setTargetAtTime(0.1, now, 2);
             break;
+    }
+    if (gainNode && isPlaying) {
+        const target = weatherBaseGain[weather] * ambientVolume;
+        gainNode.gain.setTargetAtTime(target, now, 0.25);
     }
 }
 
@@ -111,16 +137,11 @@ export const playAudio = () => {
 
 export const duckVolume = (isTyping: boolean) => {
     if (!audioCtx || !gainNode || !isPlaying) return;
-    
-    // Base volume depends on weather. Let's just adjust slightly relative to what applyWeatherToAudio set
-    // This is simple so we will just scale the current target
-    const targetVolume = isTyping ? 0.15 : 0.4; 
-    // Wait, the correct way is to re-apply weather volume or scale it down.
-    // For simplicity:
+    const base = weatherBaseGain[currentWeather] * ambientVolume;
     if (isTyping) {
-        gainNode.gain.setTargetAtTime(0.15, audioCtx.currentTime, 0.5);
+        gainNode.gain.setTargetAtTime(base * 0.45, audioCtx.currentTime, 0.5);
     } else {
-        applyWeatherToAudio(currentWeather);
+        gainNode.gain.setTargetAtTime(base, audioCtx.currentTime, 0.5);
     }
 };
 
@@ -131,12 +152,12 @@ export const muteAudio = () => {
 };
 
 export const toggleAudio = (): boolean => {
-    if (isPlaying) {
+    if (isPlaying && ambientVolume > 0) {
         muteAudio();
         return false;
-    } else {
-        playAudio();
-        return true;
     }
+    if (ambientVolume <= 0) ambientVolume = 0.35;
+    playAudio();
+    return true;
 };
 

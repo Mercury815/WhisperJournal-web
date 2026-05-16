@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { toggleAudio, duckVolume, playAudio, setWeatherAudio } from '../lib/audioService';
+import {
+    duckVolume,
+    playAudio,
+    setWeatherAudio,
+    getAmbientVolume,
+    setAmbientVolume,
+} from '../lib/audioService';
 import { Volume2, VolumeX, Smile, Save, SlidersHorizontal } from 'lucide-react';
 import { saveEntry, getEntryForToday, type JournalEntry } from '../lib/store';
 import { cn } from '../lib/utils';
@@ -51,6 +57,7 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
     const [emotions, setEmotions] = useState<string[]>(['😐']);
     const [isZenMode, setIsZenMode] = useState(false);
     const [isAudioPlaying, setIsAudioPlaying] = useState(true);
+    const [ambientVolume, setAmbientVolumeState] = useState(() => getAmbientVolume());
     const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'typing'>('saved');
     
     const [showEmotionPicker, setShowEmotionPicker] = useState(false);
@@ -67,6 +74,7 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [emailStatus, setEmailStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
     const [showSaveSyncPrompt, setShowSaveSyncPrompt] = useState(false);
+    const [showFreeSettingsPanel, setShowFreeSettingsPanel] = useState(false);
     
     const weather = useEnvironmentStore(state => getEffectiveEnv(state).weather);
     const timePhase = useEnvironmentStore(state => getEffectiveEnv(state).timePhase);
@@ -194,6 +202,34 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
     const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
     const entryIdRef = useRef<string>(crypto.randomUUID());
     const hintDismissedRef = useRef(false);
+    const freeModeHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const freeModeLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const clearFreeModeTimers = () => {
+        if (freeModeHoverTimerRef.current) {
+            clearTimeout(freeModeHoverTimerRef.current);
+            freeModeHoverTimerRef.current = null;
+        }
+        if (freeModeLeaveTimerRef.current) {
+            clearTimeout(freeModeLeaveTimerRef.current);
+            freeModeLeaveTimerRef.current = null;
+        }
+    };
+
+    const scheduleCloseFreeSettingsPanel = () => {
+        if (freeModeLeaveTimerRef.current) clearTimeout(freeModeLeaveTimerRef.current);
+        freeModeLeaveTimerRef.current = setTimeout(() => {
+            setShowFreeSettingsPanel(false);
+            freeModeLeaveTimerRef.current = null;
+        }, 1000);
+    };
+
+    const cancelCloseFreeSettingsPanel = () => {
+        if (freeModeLeaveTimerRef.current) {
+            clearTimeout(freeModeLeaveTimerRef.current);
+            freeModeLeaveTimerRef.current = null;
+        }
+    };
 
     useEffect(() => {
         let todayEntry: JournalEntry | null = null;
@@ -228,14 +264,47 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
         }
     }, [isAnonymous, userId, loadUserEntries]);
 
-    const toggleFreeMode = () => {
-        const next = !freeMode;
-        setFreeModeStore(next);
+    useEffect(() => () => clearFreeModeTimers(), []);
+
+    const handleFreeModeClick = () => {
         const st = useEnvironmentStore.getState();
+        const next = !st.freeMode;
+        setFreeModeStore(next);
+        clearFreeModeTimers();
         if (next) {
             setWeatherAudio(st.freeWeather);
+            setShowFreeSettingsPanel(true);
         } else {
-            setWeatherAudio(getEffectiveEnv(st).weather);
+            setWeatherAudio(getEffectiveEnv(useEnvironmentStore.getState()).weather);
+            setShowFreeSettingsPanel(false);
+        }
+    };
+
+    const handleFreeModeClusterEnter = () => {
+        cancelCloseFreeSettingsPanel();
+    };
+
+    const handleFreeModeClusterLeave = () => {
+        if (freeModeHoverTimerRef.current) {
+            clearTimeout(freeModeHoverTimerRef.current);
+            freeModeHoverTimerRef.current = null;
+        }
+        scheduleCloseFreeSettingsPanel();
+    };
+
+    const handleFreeModeButtonMouseEnter = () => {
+        if (!freeMode) return;
+        if (freeModeHoverTimerRef.current) clearTimeout(freeModeHoverTimerRef.current);
+        freeModeHoverTimerRef.current = setTimeout(() => {
+            setShowFreeSettingsPanel(true);
+            freeModeHoverTimerRef.current = null;
+        }, 1000);
+    };
+
+    const handleFreeModeButtonMouseLeave = () => {
+        if (freeModeHoverTimerRef.current) {
+            clearTimeout(freeModeHoverTimerRef.current);
+            freeModeHoverTimerRef.current = null;
         }
     };
 
@@ -246,6 +315,27 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
     const handleFreeWeatherPick = (w: WeatherType) => {
         setFreeEnvironmentStore({ weather: w });
         setWeatherAudio(w);
+    };
+
+    const handleAmbientVolumeChange = (value: number) => {
+        const v = value / 100;
+        setAmbientVolumeState(v);
+        setAmbientVolume(v);
+        setIsAudioPlaying(v > 0);
+    };
+
+    const handleVolumeMuteToggle = () => {
+        if (ambientVolume > 0) {
+            setAmbientVolume(0);
+            setAmbientVolumeState(0);
+            setIsAudioPlaying(false);
+        } else {
+            const restore = 0.35;
+            setAmbientVolume(restore);
+            setAmbientVolumeState(restore);
+            playAudio();
+            setIsAudioPlaying(true);
+        }
     };
 
     useEffect(() => {
@@ -436,213 +526,30 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
             initial={{ opacity: 0, scale: 0.98, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } }}
             exit={{ opacity: 0, scale: 0.98, y: -10, transition: { duration: 0.4 } }}
-            className={`fixed inset-0 z-20 flex flex-col p-8 md:p-12 pointer-events-none font-sans select-none ${textColor}`}
+            className={`fixed inset-0 z-20 pointer-events-none font-sans select-none ${textColor}`}
         >
-            <AnimatePresence>
-                {!isZenMode && (
-                    <motion.header 
-                        initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
-                        className="relative z-30 w-full flex justify-between items-start pointer-events-none"
-                    >
-                        {/* Left Header */}
-                        <div className="flex flex-col space-y-4 pointer-events-auto">
-                            <button 
-                                onClick={() => setShowEmotionPicker(!showEmotionPicker)}
-                                className={`flex items-center justify-center ${cardBg} backdrop-blur-lg px-5 py-3 rounded-[20px] border shadow-sm hover:bg-white/50 transition-all pointer-events-auto min-w-[64px]`}
-                            >
-                                <span className="flex space-x-2 text-xl font-['Apple_Color_Emoji','Segoe_UI_Emoji','Noto_Color_Emoji'] tracking-widest">
-                                    {emotions.length > 0 ? emotions.map((e, idx) => <span key={idx}>{e}</span>) : <Smile size={20} />}
-                                </span>
-                            </button>
-                            
-                            <AnimatePresence>
-                                {showEmotionPicker && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-                                        className={`${cardBg} backdrop-blur-lg p-3 rounded-[20px] border grid grid-cols-4 gap-2 shadow-lg`}
-                                    >
-                                        {EMOJI_OPTIONS.map(emoji => (
-                                            <button 
-                                                key={emoji} 
-                                                onClick={() => handleEmotionSelect(emoji)}
-                                                className={cn(
-                                                    "w-10 h-10 flex items-center justify-center rounded-full border border-transparent hover:border-white/20 hover:bg-white/40 transition-all text-lg",
-                                                    emotions.includes(emoji) && "bg-white/50 border-white/30 shadow-sm scale-110"
-                                                )}
-                                            >
-                                                {emoji}
-                                            </button>
-                                        ))}
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
-
-                        {/* Right Header */}
-                        <div className="flex flex-col items-end gap-3 pointer-events-auto">
-                            <div className="flex items-center gap-3">
-                                {isAnonymous ? (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={() => openAuthModal('login')}
-                                            className={cn(
-                                                'text-[13px] font-medium tracking-wide underline underline-offset-4 decoration-white/30 hover:opacity-90 transition-opacity',
-                                                isNight ? 'text-[#EAF4FF]/90' : 'text-[#2B2D42]/90',
-                                            )}
-                                        >
-                                            Log in
-                                        </button>
-                                        <span className={cn('text-[12px] opacity-40 select-none', subTextColor)} aria-hidden>
-                                            ·
-                                        </span>
-                                        <button
-                                            type="button"
-                                            onClick={() => openAuthModal('register')}
-                                            className={cn(
-                                                'text-[13px] font-medium tracking-wide underline underline-offset-4 decoration-white/30 hover:opacity-90 transition-opacity',
-                                                isNight ? 'text-[#EAF4FF]/90' : 'text-[#2B2D42]/90',
-                                            )}
-                                        >
-                                            Sign up
-                                        </button>
-                                    </>
-                                ) : (
-                                    <div className="flex items-center gap-3">
-                                        <span className={cn('text-[12px] font-medium', subTextColor)}>{email || 'Signed in'}</span>
-                                        <button
-                                            type="button"
-                                            onClick={handleLogout}
-                                            className={cn(
-                                                'text-[12px] font-medium underline underline-offset-4 decoration-white/30 hover:opacity-90 transition-opacity',
-                                                isNight ? 'text-[#EAF4FF]/70' : 'text-[#2B2D42]/70',
-                                            )}
-                                        >
-                                            Log out
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                            <div className="flex space-x-6 items-center">
-                            <div className={`flex flex-col items-end ${cardBg} backdrop-blur-lg rounded-[20px] border h-[71px] pt-[12px] px-[15px] pb-[9px] mr-[31px] mb-[30px] -mt-[9px] justify-center`}>
-                                <div className={`flex items-center ${textColor}`}>
-                                    <span className="text-lg">{WEATHER_ICONS[weather]}</span>
-                                </div>
-                                <div className={`text-[11px] ${subTextColor} font-mono mt-1`}>{WEATHER_LABELS[weather]}</div>
-                            </div>
-                            
-                            <button 
-                                onClick={() => setIsAudioPlaying(toggleAudio())}
-                                className={`flex items-center space-x-4 ${cardBg} backdrop-blur-lg px-4 rounded-full border hover:bg-white/50 transition-all shadow-sm w-[293px] h-[40px]`}
-                            >
-                                <div className={`w-8 h-8 flex items-center justify-center text-xs ${activeIconColor}`}>
-                                    {isAudioPlaying ? <Volume2 size={16} /> : <VolumeX size={16} />}
-                                </div>
-                                <div className="w-32 h-[2px] bg-white/10 relative hidden sm:block">
-                                    <div className={cn("absolute h-full bg-white/40 rounded-full transition-all duration-300", isAudioPlaying ? "w-[40%]" : "w-0")}></div>
-                                    <div className={cn(`absolute top-1/2 -translate-y-1/2 w-2 h-2 ${isNight ? 'bg-white' : 'bg-[#2B2D42]'} rounded-full transition-all duration-300`, isAudioPlaying ? "left-[40%]" : "left-0")}></div>
-                                </div>
-                                <span className={`text-[11px] font-medium ${activeIconColor} pr-2 hidden sm:block`}>Ambient Nature</span>
-                            </button>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={toggleFreeMode}
-                                className={cn(
-                                    'flex items-center gap-2 px-3 py-2 rounded-full border text-[12px] font-medium transition-all mt-1',
-                                    cardBg,
-                                    'backdrop-blur-lg shadow-sm hover:bg-white/50',
-                                    freeMode &&
-                                        (isNight ? 'ring-1 ring-white/25 bg-white/10' : 'ring-1 ring-[#2B2D42]/15 bg-white/55'),
-                                )}
-                                aria-pressed={freeMode}
-                            >
-                                <SlidersHorizontal size={14} strokeWidth={2} className={activeIconColor} />
-                                自由模式 {freeMode ? '开' : '关'}
-                            </button>
-
-                            <AnimatePresence>
-                                {freeMode && (
-                                    <motion.div
-                                        initial={{ opacity: 0, y: -6 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -6 }}
-                                        className={cn(
-                                            'mt-2 flex flex-col items-end gap-2 p-3 rounded-[16px] border max-w-[min(100vw-4rem,320px)]',
-                                            cardBg,
-                                            'backdrop-blur-lg shadow-lg',
-                                        )}
-                                    >
-                                        <span className={`text-[10px] uppercase tracking-wider ${subTextColor}`}>时段</span>
-                                        <div className="flex flex-wrap justify-end gap-1.5">
-                                            {TIME_PHASES.map((tp) => (
-                                                <button
-                                                    key={tp}
-                                                    type="button"
-                                                    onClick={() => handleFreeTimePick(tp)}
-                                                    className={cn(
-                                                        'px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors',
-                                                        freeTimePhase === tp
-                                                            ? isNight
-                                                                ? 'bg-white/20 border-white/30 text-[#EAF4FF]'
-                                                                : 'bg-[#2B2D42]/15 border-[#2B2D42]/25 text-[#2B2D42]'
-                                                            : isNight
-                                                              ? 'border-white/10 bg-black/15 text-[#EAF4FF]/80 hover:bg-white/10'
-                                                              : 'border-black/10 bg-black/[0.04] text-[#2B2D42]/85 hover:bg-black/[0.07]',
-                                                    )}
-                                                >
-                                                    {TIME_PHASE_LABELS[tp]}
-                                                </button>
-                                            ))}
-                                        </div>
-                                        <span className={`text-[10px] uppercase tracking-wider ${subTextColor} mt-1`}>天气</span>
-                                        <div className="flex flex-wrap justify-end gap-1.5">
-                                            {WEATHER_TYPES.map((w) => (
-                                                <button
-                                                    key={w}
-                                                    type="button"
-                                                    onClick={() => handleFreeWeatherPick(w)}
-                                                    className={cn(
-                                                        'px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors inline-flex items-center gap-1',
-                                                        freeWeather === w
-                                                            ? isNight
-                                                                ? 'bg-white/20 border-white/30 text-[#EAF4FF]'
-                                                                : 'bg-[#2B2D42]/15 border-[#2B2D42]/25 text-[#2B2D42]'
-                                                            : isNight
-                                                              ? 'border-white/10 bg-black/15 text-[#EAF4FF]/80 hover:bg-white/10'
-                                                              : 'border-black/10 bg-black/[0.04] text-[#2B2D42]/85 hover:bg-black/[0.07]',
-                                                    )}
-                                                >
-                                                    <span>{WEATHER_ICONS[w]}</span>
-                                                    {WEATHER_LABELS_FREE[w]}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
-                    </motion.header>
-                )}
-            </AnimatePresence>
-
-            <main className="relative z-20 flex-1 flex items-center justify-center pointer-events-none w-full">
-                <motion.div 
+            {/* 日记卡片：固定视口正中，独立图层 */}
+            <motion.div className="pointer-events-none fixed inset-0 z-[22] flex items-center justify-center px-6 md:px-10">
+                <motion.div
                     animate={{ y: [-10, 10, -10] }}
-                    transition={{ repeat: Infinity, duration: 5, ease: "easeInOut" }}
+                    transition={{ repeat: Infinity, duration: 5, ease: 'easeInOut' }}
                     className={cn(
-                        `w-[640px] max-w-full ${cardBg} backdrop-blur-[32px] rounded-[28px] p-10 flex flex-col pointer-events-auto transition-all duration-700 h-[350px]`,
-                        saveStatus === 'typing' ? (isNight ? "bg-[#182C4B]/60 shadow-sm" : "bg-white/50 shadow-sm") : "shadow-[0_8px_32px_rgba(0,0,0,0.06)]",
-                        isZenMode && "scale-[1.02] shadow-[0_32px_64px_rgba(0,0,0,0.06)]",
-                        showSuccessGlow && "shadow-[0_0_40px_rgba(168,208,141,0.4)]"
-                    )}>
-                    <div className="flex flex-col space-y-6 h-full border-transparent">
-                        <div className="flex justify-between items-center shrink-0">
+                        `w-[640px] max-w-full ${cardBg} backdrop-blur-[32px] rounded-[28px] p-10 flex flex-col pointer-events-auto transition-all duration-700 h-[min(350px,70vh)]`,
+                        saveStatus === 'typing'
+                            ? isNight
+                                ? 'bg-[#182C4B]/60 shadow-sm'
+                                : 'bg-white/50 shadow-sm'
+                            : 'shadow-[0_8px_32px_rgba(0,0,0,0.06)]',
+                        isZenMode && 'scale-[1.02] shadow-[0_32px_64px_rgba(0,0,0,0.06)]',
+                        showSuccessGlow && 'shadow-[0_0_40px_rgba(168,208,141,0.4)]',
+                    )}
+                >
+                    <motion.div className="flex flex-col space-y-6 h-full border-transparent">
+                        <motion.div className="flex justify-between items-center shrink-0">
                             <span className={`text-[28px] font-medium ${textColor} tracking-tight`}>WhisperJournal</span>
                             <span className={`text-[13px] ${subTextColor} italic`}>{formatDateForTop()}</span>
-                        </div>
-                        
+                        </motion.div>
+
                         <textarea
                             value={text}
                             onChange={handleChange}
@@ -650,11 +557,20 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
                             className={`w-full flex-1 bg-transparent resize-none outline-none ${textColor} opacity-80 placeholder-current/40 text-[16px] leading-[26px] font-sans`}
                         />
 
-                        <div className={`h-[1px] w-full ${isNight ? 'bg-white/10' : 'bg-[#2B2D42]/10'} shrink-0`}></div>
-                        
-                        <div className={`flex justify-between items-center text-[13px] ${subTextColor} shrink-0`}>
-                            <div className="flex items-center space-x-2">
-                                <div className={cn("w-2 h-2 rounded-full", saveStatus === 'saving' || saveStatus === 'typing' || syncStatus === 'syncing' ? "bg-[#A8D08D] animate-pulse" : (isNight ? "bg-white/20" : "bg-[#2B2D42]/20"))}></div>
+                        <motion.div className={`h-px w-full ${isNight ? 'bg-white/10' : 'bg-[#2B2D42]/10'} shrink-0`} />
+
+                        <motion.div className={`flex justify-between items-center text-[13px] ${subTextColor} shrink-0`}>
+                            <motion.div className="flex items-center space-x-2">
+                                <motion.div
+                                    className={cn(
+                                        'w-2 h-2 rounded-full',
+                                        saveStatus === 'saving' || saveStatus === 'typing' || syncStatus === 'syncing'
+                                            ? 'bg-[#A8D08D] animate-pulse'
+                                            : isNight
+                                              ? 'bg-white/20'
+                                              : 'bg-[#2B2D42]/20',
+                                    )}
+                                />
                                 <span>
                                     {saveStatus === 'typing' && 'Typing...'}
                                     {saveStatus === 'saving' && 'Saving locally...'}
@@ -662,8 +578,8 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
                                     {saveStatus === 'saved' && syncStatus === 'unsynced' && 'Unsynced'}
                                     {saveStatus === 'saved' && (syncStatus === 'saved' || syncStatus === 'idle') && 'Saved'}
                                 </span>
-                            </div>
-                            <div className="flex items-center space-x-4">
+                            </motion.div>
+                            <motion.div className="flex items-center space-x-4">
                                 <button
                                     type="button"
                                     onClick={handleManualSave}
@@ -680,7 +596,7 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
                                 </button>
                                 <AnimatePresence>
                                     {showSuccessGlow && (
-                                        <motion.span 
+                                        <motion.span
                                             initial={{ opacity: 0 }}
                                             animate={{ opacity: 1 }}
                                             exit={{ opacity: 0 }}
@@ -691,53 +607,323 @@ export const WritingPage: React.FC<Props> = ({ onOpenCalendar }) => {
                                     )}
                                 </AnimatePresence>
                                 <span>{wordCount} words</span>
-                            </div>
-                        </div>
-                    </div>
+                            </motion.div>
+                        </motion.div>
+                    </motion.div>
                 </motion.div>
-            </main>
+            </motion.div>
 
             <AnimatePresence>
                 {!isZenMode && (
-                    <motion.footer 
-                        initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
-                        className="relative z-10 w-full flex justify-between items-end pointer-events-none"
-                    >
-                        <div className="flex flex-col space-y-2 pointer-events-auto justify-end mb-2">
-                            <AnimatePresence>
-                                {!showZenHintDismissed && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, x: -20 }}
-                                        animate={{ opacity: 1, x: 0, transition: { delay: 1.5, duration: 0.5 } }}
-                                        exit={{ opacity: 0, scale: 0.95 }}
-                                        className={`px-4 py-2 ${cardBg} backdrop-blur-md ${subTextColor} border rounded-full text-[12px] shadow-sm flex items-center`}
+                    <>
+                        {/* 左上：心情 + 天气 */}
+                        <motion.div
+                            initial={{ opacity: 0, y: -12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -12 }}
+                            className="fixed top-8 left-8 z-40 flex flex-col items-start gap-3 pointer-events-none"
+                        >
+                            <motion.div className="relative pointer-events-auto">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowEmotionPicker((v) => !v)}
+                                    className={`flex items-center justify-center ${cardBg} backdrop-blur-lg px-5 py-3 rounded-[20px] border shadow-sm hover:bg-white/50 transition-all min-w-[64px]`}
+                                    aria-expanded={showEmotionPicker}
+                                    aria-haspopup="true"
+                                >
+                                    <span className="flex space-x-2 text-xl font-['Apple_Color_Emoji','Segoe_UI_Emoji','Noto_Color_Emoji'] tracking-widest">
+                                        {emotions.length > 0
+                                            ? emotions.map((e, idx) => <span key={idx}>{e}</span>)
+                                            : <Smile size={20} />}
+                                    </span>
+                                </button>
+
+                                <AnimatePresence>
+                                    {showEmotionPicker && (
+                                        <motion.div
+                                            initial={{ opacity: 0, scale: 0.96, y: -4 }}
+                                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.96, y: -4 }}
+                                            className="absolute left-0 top-full z-50 pt-2"
+                                        >
+                                            <motion.div
+                                                className={cn(
+                                                    cardBg,
+                                                    'backdrop-blur-lg rounded-[20px] border shadow-lg p-4 w-[248px] grid grid-cols-4 gap-3 place-items-center',
+                                                )}
+                                            >
+                                                {EMOJI_OPTIONS.map((emoji) => (
+                                                    <button
+                                                        key={emoji}
+                                                        type="button"
+                                                        onClick={() => handleEmotionSelect(emoji)}
+                                                        className={cn(
+                                                            'w-12 h-12 shrink-0 flex items-center justify-center rounded-full border border-transparent hover:border-white/20 hover:bg-white/40 transition-all text-[22px] leading-none',
+                                                            emotions.includes(emoji) &&
+                                                                'bg-white/50 border-white/30 shadow-sm scale-105',
+                                                        )}
+                                                    >
+                                                        {emoji}
+                                                    </button>
+                                                ))}
+                                            </motion.div>
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </motion.div>
+
+                            <motion.div
+                                className={cn(
+                                    'flex flex-col items-center pointer-events-auto',
+                                    cardBg,
+                                    'backdrop-blur-lg rounded-[20px] border px-4 py-3 min-w-[72px] shadow-sm',
+                                )}
+                            >
+                                <span className={`text-xl leading-none ${textColor}`}>{WEATHER_ICONS[weather]}</span>
+                                <span className={`text-[11px] ${subTextColor} font-mono mt-1.5 text-center whitespace-nowrap`}>
+                                    {WEATHER_LABELS[weather]}
+                                </span>
+                            </motion.div>
+                        </motion.div>
+
+                        {/* 右上：登录 */}
+                        <motion.div
+                            initial={{ opacity: 0, y: -12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -12 }}
+                            className="fixed top-8 right-8 z-40 pointer-events-auto"
+                        >
+                            {isAnonymous ? (
+                                <motion.div className="flex items-center gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => openAuthModal('login')}
+                                        className={cn(
+                                            'text-[13px] font-medium tracking-wide underline underline-offset-4 decoration-white/30 hover:opacity-90 transition-opacity',
+                                            isNight ? 'text-[#EAF4FF]/90' : 'text-[#2B2D42]/90',
+                                        )}
                                     >
-                                        <span>Press <kbd className={`font-sans px-1.5 py-0.5 border ${isNight ? 'border-white/20 bg-white/5' : 'border-black/10 bg-black/5'} rounded-md mx-1`}>Tab</kbd> for Zen Mode</span>
-                                        <button onClick={() => setShowZenHintDismissed(true)} className="hover:text-current hover:opacity-100 opacity-50 ml-3">✕</button>
+                                        Log in
+                                    </button>
+                                    <span className={cn('text-[12px] opacity-40 select-none', subTextColor)} aria-hidden>
+                                        ·
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => openAuthModal('register')}
+                                        className={cn(
+                                            'text-[13px] font-medium tracking-wide underline underline-offset-4 decoration-white/30 hover:opacity-90 transition-opacity',
+                                            isNight ? 'text-[#EAF4FF]/90' : 'text-[#2B2D42]/90',
+                                        )}
+                                    >
+                                        Sign up
+                                    </button>
+                                </motion.div>
+                            ) : (
+                                <motion.div className="flex items-center gap-3">
+                                    <span className={cn('text-[12px] font-medium', subTextColor)}>{email || 'Signed in'}</span>
+                                    <button
+                                        type="button"
+                                        onClick={handleLogout}
+                                        className={cn(
+                                            'text-[12px] font-medium underline underline-offset-4 decoration-white/30 hover:opacity-90 transition-opacity',
+                                            isNight ? 'text-[#EAF4FF]/70' : 'text-[#2B2D42]/70',
+                                        )}
+                                    >
+                                        Log out
+                                    </button>
+                                </motion.div>
+                            )}
+                        </motion.div>
+
+                        {/* 右侧贴边：竖向音量 */}
+                        <motion.div
+                            initial={{ opacity: 0, x: 12 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 12 }}
+                            className={cn(
+                                'fixed right-3 top-1/2 -translate-y-1/2 z-40 pointer-events-auto flex flex-col items-center gap-2 py-3 px-2 rounded-[20px] border',
+                                cardBg,
+                                'backdrop-blur-lg shadow-sm',
+                            )}
+                        >
+                            <button
+                                type="button"
+                                onClick={handleVolumeMuteToggle}
+                                className={cn('p-1.5 rounded-full hover:bg-white/20 transition-colors', activeIconColor)}
+                                aria-label={ambientVolume > 0 ? '静音' : '恢复音量'}
+                            >
+                                {ambientVolume > 0 ? <Volume2 size={18} /> : <VolumeX size={18} />}
+                            </button>
+                            <motion.div className="relative h-28 w-8 flex items-center justify-center">
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={100}
+                                    step={1}
+                                    value={Math.round(ambientVolume * 100)}
+                                    onChange={(e) => handleAmbientVolumeChange(Number(e.target.value))}
+                                    aria-label="环境音量"
+                                    className={cn(
+                                        'volume-slider-vertical',
+                                        isNight ? 'accent-[#EAF4FF]/80' : 'accent-[#2B2D42]/70',
+                                    )}
+                                />
+                            </motion.div>
+                        </motion.div>
+
+                        {/* 左下：自由模式 */}
+                        <motion.div
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 12 }}
+                            className="fixed bottom-8 left-8 z-40 pointer-events-auto"
+                            onMouseEnter={handleFreeModeClusterEnter}
+                            onMouseLeave={handleFreeModeClusterLeave}
+                        >
+                            <button
+                                type="button"
+                                onClick={handleFreeModeClick}
+                                onMouseEnter={handleFreeModeButtonMouseEnter}
+                                onMouseLeave={handleFreeModeButtonMouseLeave}
+                                className={cn(
+                                    'flex items-center gap-2 px-3 py-2 rounded-full border text-[12px] font-medium transition-all',
+                                    cardBg,
+                                    'backdrop-blur-lg shadow-sm hover:bg-white/50',
+                                    freeMode &&
+                                        (isNight ? 'ring-1 ring-white/25 bg-white/10' : 'ring-1 ring-[#2B2D42]/15 bg-white/55'),
+                                )}
+                                aria-pressed={freeMode}
+                                aria-expanded={showFreeSettingsPanel}
+                            >
+                                <SlidersHorizontal size={14} strokeWidth={2} className={activeIconColor} />
+                                自由模式 {freeMode ? '开' : '关'}
+                            </button>
+
+                            <AnimatePresence>
+                                {freeMode && showFreeSettingsPanel && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: 8 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: 8 }}
+                                        className="absolute left-0 bottom-full z-50 pb-2"
+                                    >
+                                        <motion.div
+                                            className={cn(
+                                                'flex flex-col items-start gap-2 p-3 rounded-[16px] border w-[min(calc(100vw-4rem),300px)]',
+                                                cardBg,
+                                                'backdrop-blur-lg shadow-lg',
+                                            )}
+                                        >
+                                            <span className={`text-[10px] uppercase tracking-wider ${subTextColor}`}>时段</span>
+                                            <motion.div className="flex flex-wrap gap-1.5">
+                                                {TIME_PHASES.map((tp) => (
+                                                    <button
+                                                        key={tp}
+                                                        type="button"
+                                                        onClick={() => handleFreeTimePick(tp)}
+                                                        className={cn(
+                                                            'px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors',
+                                                            freeTimePhase === tp
+                                                                ? isNight
+                                                                    ? 'bg-white/20 border-white/30 text-[#EAF4FF]'
+                                                                    : 'bg-[#2B2D42]/15 border-[#2B2D42]/25 text-[#2B2D42]'
+                                                                : isNight
+                                                                  ? 'border-white/10 bg-black/15 text-[#EAF4FF]/80 hover:bg-white/10'
+                                                                  : 'border-black/10 bg-black/[0.04] text-[#2B2D42]/85 hover:bg-black/[0.07]',
+                                                        )}
+                                                    >
+                                                        {TIME_PHASE_LABELS[tp]}
+                                                    </button>
+                                                ))}
+                                            </motion.div>
+                                            <span className={`text-[10px] uppercase tracking-wider ${subTextColor} mt-1`}>天气</span>
+                                            <motion.div className="flex flex-wrap gap-1.5">
+                                                {WEATHER_TYPES.map((w) => (
+                                                    <button
+                                                        key={w}
+                                                        type="button"
+                                                        onClick={() => handleFreeWeatherPick(w)}
+                                                        className={cn(
+                                                            'px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors inline-flex items-center gap-1',
+                                                            freeWeather === w
+                                                                ? isNight
+                                                                    ? 'bg-white/20 border-white/30 text-[#EAF4FF]'
+                                                                    : 'bg-[#2B2D42]/15 border-[#2B2D42]/25 text-[#2B2D42]'
+                                                                : isNight
+                                                                  ? 'border-white/10 bg-black/15 text-[#EAF4FF]/80 hover:bg-white/10'
+                                                                  : 'border-black/10 bg-black/[0.04] text-[#2B2D42]/85 hover:bg-black/[0.07]',
+                                                        )}
+                                                    >
+                                                        <span>{WEATHER_ICONS[w]}</span>
+                                                        {WEATHER_LABELS_FREE[w]}
+                                                    </button>
+                                                ))}
+                                            </motion.div>
+                                        </motion.div>
                                     </motion.div>
                                 )}
                             </AnimatePresence>
-                        </div>
+                        </motion.div>
 
-                        <div className="flex items-center space-x-6 pointer-events-auto">
-                            <div className="flex flex-col items-end hidden sm:flex">
-                                <span className={`text-[11px] uppercase tracking-[0.2em] ${subTextColor} font-bold mb-3`}>History</span>
-                                <div className="flex space-x-1">
-                                    <div className="w-2.5 h-2.5 bg-[#95D5B2] rounded-[2px]"></div>
-                                    <div className="w-2.5 h-2.5 bg-[#B7E4C7] rounded-[2px]"></div>
-                                    <div className="w-2.5 h-2.5 bg-white/20 rounded-[2px] opacity-50"></div>
-                                    <div className="w-2.5 h-2.5 bg-[#95D5B2] rounded-[2px]"></div>
-                                    <div className="w-2.5 h-2.5 bg-[#B7E4C7] rounded-[2px] scale-125 shadow-sm"></div>
-                                </div>
-                            </div>
-                            <button 
-                                onClick={handleOpenCalendar}
-                                className={`w-14 h-14 flex items-center justify-center ${cardBg} backdrop-blur-lg rounded-full border shadow-sm ${textColor} hover:bg-white/70 hover:scale-105 transition-all text-xl`}
-                            >
-                                📅
-                            </button>
-                        </div>
-                    </motion.footer>
+                        {/* 右下：禅意提示 + 日历 */}
+                        <motion.footer
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 12 }}
+                            className="fixed bottom-8 right-8 z-40 flex flex-col items-end gap-3 pointer-events-none"
+                        >
+                            <AnimatePresence>
+                                {!showZenHintDismissed && (
+                                    <motion.div
+                                        initial={{ opacity: 0, x: 20 }}
+                                        animate={{ opacity: 1, x: 0, transition: { delay: 1.5, duration: 0.5 } }}
+                                        exit={{ opacity: 0, scale: 0.95 }}
+                                        className={`px-4 py-2 ${cardBg} backdrop-blur-md ${subTextColor} border rounded-full text-[12px] shadow-sm flex items-center pointer-events-auto`}
+                                    >
+                                        <span>
+                                            Press{' '}
+                                            <kbd
+                                                className={`font-sans px-1.5 py-0.5 border ${isNight ? 'border-white/20 bg-white/5' : 'border-black/10 bg-black/5'} rounded-md mx-1`}
+                                            >
+                                                Tab
+                                            </kbd>{' '}
+                                            for Zen Mode
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowZenHintDismissed(true)}
+                                            className="hover:text-current hover:opacity-100 opacity-50 ml-3"
+                                        >
+                                            ✕
+                                        </button>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            <motion.div className="flex items-center gap-6 pointer-events-auto">
+                                <motion.div className="flex flex-col items-end hidden sm:flex">
+                                    <span className={`text-[11px] uppercase tracking-[0.2em] ${subTextColor} font-bold mb-3`}>
+                                        History
+                                    </span>
+                                    <motion.div className="flex space-x-1">
+                                        <motion.div className="w-2.5 h-2.5 bg-[#95D5B2] rounded-[2px]" />
+                                        <motion.div className="w-2.5 h-2.5 bg-[#B7E4C7] rounded-[2px]" />
+                                        <motion.div className="w-2.5 h-2.5 bg-white/20 rounded-[2px] opacity-50" />
+                                        <motion.div className="w-2.5 h-2.5 bg-[#95D5B2] rounded-[2px]" />
+                                        <motion.div className="w-2.5 h-2.5 bg-[#B7E4C7] rounded-[2px] scale-125 shadow-sm" />
+                                    </motion.div>
+                                </motion.div>
+                                <button
+                                    type="button"
+                                    onClick={handleOpenCalendar}
+                                    className={`w-14 h-14 flex items-center justify-center ${cardBg} backdrop-blur-lg rounded-full border shadow-sm ${textColor} hover:bg-white/70 hover:scale-105 transition-all text-xl`}
+                                >
+                                    📅
+                                </button>
+                            </motion.div>
+                        </motion.footer>
+                    </>
                 )}
             </AnimatePresence>
 

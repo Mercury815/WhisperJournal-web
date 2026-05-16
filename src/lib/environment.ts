@@ -13,7 +13,7 @@ export interface DebugState {
   demoMode: boolean;
 }
 
-function getBaselineEnv(state: EnvironmentState): { timePhase: TimePhase; weather: WeatherType } {
+export function getBaselineEnv(state: EnvironmentState): { timePhase: TimePhase; weather: WeatherType } {
   let timePhase = state.realTimePhase;
   let weather = state.realWeather;
   if (state.debug.enabled) {

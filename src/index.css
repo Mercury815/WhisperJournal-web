@@ -53,3 +53,13 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(43, 45, 66, 0.25);
 }
+
+/* 写作页右侧竖向音量滑条 */
+.volume-slider-vertical {
+  -webkit-appearance: slider-vertical;
+  appearance: auto;
+  width: 28px;
+  height: 112px;
+  cursor: pointer;
+  background: transparent;
+}
