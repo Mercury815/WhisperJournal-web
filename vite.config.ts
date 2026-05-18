@@ -3,13 +3,15 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 
+import { cloudflare } from "@cloudflare/vite-plugin";
+
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
   /** Nest default PORT=4000; run `npm run dev:api` in another terminal. Override via .env. */
   const apiProxyTarget =
     env.VITE_API_PROXY_TARGET?.trim() || 'http://127.0.0.1:4000';
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), cloudflare()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
